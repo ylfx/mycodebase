@@ -8,7 +8,7 @@
 #     111328-Windows-Server2012-64-DataCenter-NoTools
 #     111117-Win-Server2008-Sp1-64-R2-Datacenter-Tools
 #              
-# Author: yuanyouy@vmware.com
+# Author: Yuanyou Yao
 #
 ########################################################################
 
@@ -539,26 +539,29 @@ function InstallCygwin()
     }
 }
 
+function RunActionList($skippedList)
+{
+    for ($i=0; $i -lt $ACTION_LIST.length; $i++) {
+        $action = $ACTION_LIST[$i]
+        if (($skippedList -Contains $action) -Or
+            ($GLOBAL_SKIPPED_LIST -Contains $action)) {
+            pecho "Skipping action $action"
+            continue
+        }
+        & $action
+    }
+}
+
 # Windows 2008
 function Win2008R2SP1DatacenterEdition()
 {
-    CheckWorkDir
-    CheckAdministratorPrivileges
-    ConfigureExecutionPolicy
-    ConfigureStrictMode
-    UpdateAdministratorPassword
-    ConfigureAdministratorAutoLogon
-    CheckVMwareTools
-    CheckPerlMatchSTAF
-    EnableRDP
-    ConfigureFirewall
-    ConfigureWindowsAutoUpdate
-    DisableCtrlAltDelete
-    ConfigureLowRiskFileTypes    
-    ConfigureWindowsActivation
-    InstallCygwin
-
-    PromptToRebootSystem
+    $localSkippedList = @(
+        'ConfigurePCA',
+        'ConfigureEventTracker',
+        'ConfigureUAC',
+        'EnableAdministratorOpenEdgeOnWin10'
+    )
+    RunActionList $localSkippedList
 }
 
 # Windows 2012
@@ -570,28 +573,8 @@ function Win2012R2U3DatecenterEdition()
 # Windows 10
 function Win10EnterpriseEdition()
 {
-    CheckWorkDir
-    CheckAdministratorPrivileges
-    ConfigureExecutionPolicy
-    ConfigureStrictMode
-    UpdateAdministratorPassword
-    ConfigureAdministratorAutoLogon
-    CheckVMwareTools
-    CheckPerlMatchSTAF
-    EnableRDP
-    ConfigureFirewall
-    ConfigureWindowsAutoUpdate
-    DisableCtrlAltDelete
-    ConfigureLowRiskFileTypes    
-    ConfigureWindowsActivation
-    InstallCygwin
-
-    ConfigurePCA
-    ConfigureEventTracker
-    ConfigureUAC
-    EnableAdministratorOpenEdgeOnWin10
-
-    PromptToRebootSystem
+    $localSkippedList = @()
+    RunActionList $localSkippedList
 }
 
 # Windows 7
@@ -616,7 +599,6 @@ function Win2016TechnicalPreview()
 ################################
 ############ MAIN ##############
 ################################
-
 $OS_DICT = @{
     "Microsoft Windows Server 2008 R2 Datacenter"='Win2008R2SP1DatacenterEdition';
     "Microsoft Windows Server 2012 R2 Datacenter"='Win2012R2U3DatecenterEdition';
@@ -626,7 +608,31 @@ $OS_DICT = @{
     "Microsoft Windows Server 2016 Technical Preview 3"='Win2016TechnicalPreview';
     "Microsoft Windows XP Professional"='WinXP';
 }
-
+$GLOBAL_SKIPPED_LIST = @(
+    'CheckPerlMatchSTAF'
+)
+$ACTION_LIST = @(
+    'CheckWorkDir',
+    'CheckAdministratorPrivileges',
+    'ConfigureExecutionPolicy',
+    'ConfigureStrictMode',
+    'UpdateAdministratorPassword',
+    'ConfigureAdministratorAutoLogon',
+    'CheckVMwareTools',
+    'CheckPerlMatchSTAF',
+    'EnableRDP',
+    'ConfigureFirewall',
+    'ConfigureWindowsAutoUpdate',
+    'DisableCtrlAltDelete',
+    'ConfigureLowRiskFileTypes    ',
+    'ConfigureWindowsActivation',
+    'InstallCygwin',
+    'ConfigurePCA',
+    'ConfigureEventTracker',
+    'ConfigureUAC',
+    'EnableAdministratorOpenEdgeOnWin10',
+    'PromptToRebootSystem'
+)
 try
 {
     $OSObj = GetWin32OSObject
