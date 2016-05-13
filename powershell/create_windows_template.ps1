@@ -5,10 +5,18 @@
 #              by VDNet later.
 #
 # Test Coverage:
-#     111328-Windows-Server2012-64-DataCenter-NoTools
+#     Good:
 #     111117-Win-Server2008-Sp1-64-R2-Datacenter-Tools
+#     111118-Win-Server2008-Sp1-64-R2-Datacenter-NoTools
+#     111326-Windows-Server2012-R2U3-64-DataCenter-NoTools
+#     111328-Windows-Server2012-64-DataCenter-NoTools
+#     111310-Windows-10-64-Enterprise-NoTools
+#     111308-Windows-10-32-Enterprise-NoTools
+#     111189-Windows-7-SP1-Enterprise-ToolsTeam
+#     Bad:
 #              
-# Author: Yuanyou Yao
+# Version: 0.1
+# Author: yuanyouy@vmware.com
 #
 ########################################################################
 
@@ -442,12 +450,16 @@ function EnableAdministratorOpenEdgeOnWin10()
 
 function StopPreinstalledSSHService()
 {
-    gecho "Checking service $sname"
-    $services = @('FreeSSHDService', # Win2012 64 dc
-                  'OpenSSHd' # win2008 sp1 64 r2 dc
-                 )
-    for ($i=0; $i -lt $services.length; $i++) {
-        $sname = $services[$i]
+    gecho "Checking preinstalled SSH services"
+    $services = @{
+        'FreeSSHDService'='FreeSSHDService.exe'; # Win2012 64 dc, Win7 sp1 64 en
+        'OpenSSHd'='NoExisting.exe' # win2008 sp1 64 r2 dc
+    }
+    $startupDir = [System.Environment]::GetFolderPath('Startup')
+    yecho "Found following stuffs under ${startupDir}:"
+    Get-ChildItem -Path $startupDir | %{ yecho $_.Name}
+    $services.GetEnumerator() | ForEach-Object {
+        $sname = $_.Key
         $service = Get-Service -Name $sname -ErrorAction SilentlyContinue
         if ($service) {
             yecho "Found service $sname on the system."
@@ -457,6 +469,17 @@ function StopPreinstalledSSHService()
             Set-Service -Name $sname -StartupType Disabled
         } else {
             gecho "No service $sname found on the system."
+        }
+        $proc = Get-Process -Name $sname -ErrorAction silentlycontinue
+        if ($proc) {
+            yecho "Found process $sname is running, stopping it"
+            Stop-Process -Name $sname -Force -ErrorAction SilentlyContinue
+        }
+        $sbinary = $_.Value
+        $sbinaryPath = "$startupDir\$sbinary"
+        if (Test-Path $sbinaryPath) {
+            yecho "Found Startup entry, removing $sbinaryPath"
+            Remove-Item -Path $sbinaryPath -Force -ErrorAction SilentlyContinue
         }
     }
 }
@@ -497,7 +520,7 @@ function CheckIfOpensshConfigured()
 
 function InstallCygwin()
 {
-    step "Install Cygwin then configure Openssh"
+    step "Install Cygwin, configure Openssh"
     StopPreinstalledSSHService
     $ret =  CheckIfCygwinInstalled
     if (-not $ret) {
@@ -539,29 +562,26 @@ function InstallCygwin()
     }
 }
 
-function RunActionList($skippedList)
-{
-    for ($i=0; $i -lt $ACTION_LIST.length; $i++) {
-        $action = $ACTION_LIST[$i]
-        if (($skippedList -Contains $action) -Or
-            ($GLOBAL_SKIPPED_LIST -Contains $action)) {
-            pecho "Skipping action $action"
-            continue
-        }
-        & $action
-    }
-}
-
 # Windows 2008
 function Win2008R2SP1DatacenterEdition()
 {
-    $localSkippedList = @(
-        'ConfigurePCA',
-        'ConfigureEventTracker',
-        'ConfigureUAC',
-        'EnableAdministratorOpenEdgeOnWin10'
-    )
-    RunActionList $localSkippedList
+    CheckWorkDir
+    CheckAdministratorPrivileges
+    ConfigureExecutionPolicy
+    ConfigureStrictMode
+    UpdateAdministratorPassword
+    ConfigureAdministratorAutoLogon
+    CheckVMwareTools
+    CheckPerlMatchSTAF
+    EnableRDP
+    ConfigureFirewall
+    ConfigureWindowsAutoUpdate
+    DisableCtrlAltDelete
+    ConfigureLowRiskFileTypes    
+    InstallCygwin
+    ConfigureWindowsActivation
+
+    PromptToRebootSystem
 }
 
 # Windows 2012
@@ -573,8 +593,28 @@ function Win2012R2U3DatecenterEdition()
 # Windows 10
 function Win10EnterpriseEdition()
 {
-    $localSkippedList = @()
-    RunActionList $localSkippedList
+    CheckWorkDir
+    CheckAdministratorPrivileges
+    ConfigureExecutionPolicy
+    ConfigureStrictMode
+    UpdateAdministratorPassword
+    ConfigureAdministratorAutoLogon
+    CheckVMwareTools
+    CheckPerlMatchSTAF
+    EnableRDP
+    ConfigureFirewall
+    ConfigureWindowsAutoUpdate
+    DisableCtrlAltDelete
+    ConfigureLowRiskFileTypes    
+    InstallCygwin
+    ConfigureWindowsActivation
+
+    ConfigurePCA
+    ConfigureEventTracker
+    ConfigureUAC
+    EnableAdministratorOpenEdgeOnWin10
+
+    PromptToRebootSystem
 }
 
 # Windows 7
@@ -599,6 +639,7 @@ function Win2016TechnicalPreview()
 ################################
 ############ MAIN ##############
 ################################
+
 $OS_DICT = @{
     "Microsoft Windows Server 2008 R2 Datacenter"='Win2008R2SP1DatacenterEdition';
     "Microsoft Windows Server 2012 R2 Datacenter"='Win2012R2U3DatecenterEdition';
@@ -608,31 +649,7 @@ $OS_DICT = @{
     "Microsoft Windows Server 2016 Technical Preview 3"='Win2016TechnicalPreview';
     "Microsoft Windows XP Professional"='WinXP';
 }
-$GLOBAL_SKIPPED_LIST = @(
-    'CheckPerlMatchSTAF'
-)
-$ACTION_LIST = @(
-    'CheckWorkDir',
-    'CheckAdministratorPrivileges',
-    'ConfigureExecutionPolicy',
-    'ConfigureStrictMode',
-    'UpdateAdministratorPassword',
-    'ConfigureAdministratorAutoLogon',
-    'CheckVMwareTools',
-    'CheckPerlMatchSTAF',
-    'EnableRDP',
-    'ConfigureFirewall',
-    'ConfigureWindowsAutoUpdate',
-    'DisableCtrlAltDelete',
-    'ConfigureLowRiskFileTypes    ',
-    'ConfigureWindowsActivation',
-    'InstallCygwin',
-    'ConfigurePCA',
-    'ConfigureEventTracker',
-    'ConfigureUAC',
-    'EnableAdministratorOpenEdgeOnWin10',
-    'PromptToRebootSystem'
-)
+
 try
 {
     $OSObj = GetWin32OSObject
