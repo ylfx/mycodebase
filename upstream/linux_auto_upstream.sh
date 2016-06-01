@@ -12,15 +12,17 @@
 #
 # Test Coverage:
 #       SuSE Enterprise Linux Server 12 SP 0 X86_64
+#       Red Hat Enterprise Linux Workstation release 7.2
 #
 # Author: yuanyouy@vmware.com
 #
-# v0.1 base
+# v0.1 - support SuSE Enterprise Linux Server 12 SP 0 X86_64
+# v0.2 - support Red Hat Enterprise Linux Workstation release 7.2
 
 #### global variables ####
 current_os=
 KERNEL_URL='http://w3-dbc301.eng.vmware.com/yuanyouy/vd/upstream/linux-4.5.tar.xz'
-EXEC_MODE=UPDATE # can be UPDATE, CHECK
+EXEC_MODE= # can be UPDATE, CHECK
 KERNEL_VERSION=
 logs=()
 
@@ -30,8 +32,10 @@ SUPPORTED_DRIVERS=(vmxnet3 e1000e)
 MAX_IF_INDEX=9
 JOBS=8
 SLES12_X64='SUSE Linux Enterprise Server 12'
+RHEL72_X64='Red Hat Enterprise Linux Server release 7.2'
 declare -a OS_LIST=(
    "${SLES12_X64}"
+   "${RHEL72_X64}"
 )
 declare -a OS_ARCH=(
    x86_64
@@ -40,6 +44,7 @@ VERSION_FILES=(
     /etc/issue
     /etc/SuSE-release
     /etc/os-release
+    /etc/redhat-release
 )
 WORK_DIR=/vdupstream
 BUILD_OUTPUT_DIR=${WORK_DIR}/kernel
@@ -141,7 +146,7 @@ function update_kernel {
     local save_to="${WORK_DIR}/${kernel_filename}"
     local untar_log="$WORK_DIR/kernel_decompress.log"
     echo Download kernel from $KERNEL_URL, save to $save_to
-    if [[ ! -f $save_to ]]; then
+    if [[ ! -f $save_to || ! -s $save_to ]]; then
         if [[ $KERNEL_URL =~ ^https ]]; then
             wget --no-check-certificate -O $save_to $KERNEL_URL &>$download_log
         elif [[ $KERNEL_URL =~ ^http ]]; then
@@ -201,7 +206,7 @@ function update_mount_output {
     gecho Update mount command output
     # see below mount output on RHEL7, two slashes
     # mount | grep automation
-    # 10.115.172.226://vd_template_automation on /automation ...
+    # 10.115.172.29://vd_template_automation on /automation ...
     # To make it survive from VDNet, we need to remove one slash
     local mount_path=/usr/bin/mount
     local mount_backup=/usr/bin/mount.stock
@@ -216,6 +221,45 @@ else
     $mount_backup "\$@"
 fi
 EOF
+}
+
+# For RHEL only
+function update_ifconfig_output {
+    gecho Update ifconfig command output
+    # see below mount output on RHEL7+, there is a colon after network interface name,
+    # ifconfig or ifconfig -a or ifconfig eth0
+    # eth0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500
+    #         inet 10.116.249.51  netmask 255.255.240.0  broadcast 10.116.255.255
+    #         inet6 fe80::20c:29ff:fe55:ef7e  prefixlen 64  scopeid 0x20<link>
+    #         ether 00:0c:29:55:ef:7e  txqueuelen 1000  (Ethernet)
+    #         RX packets 131044  bytes 100057617 (95.4 MiB)
+    #         RX errors 0  dropped 0  overruns 0  frame 0
+    #         TX packets 7021  bytes 906713 (885.4 KiB)
+    #         TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0
+    #
+    # lo: flags=73<UP,LOOPBACK,RUNNING>  mtu 65536
+    #         inet 127.0.0.1  netmask 255.0.0.0
+    #         inet6 ::1  prefixlen 128  scopeid 0x10<host>
+    #         loop  txqueuelen 0  (Local Loopback)
+    #         RX packets 12  bytes 912 (912.0 B)
+    #         RX errors 0  dropped 0  overruns 0  frame 0
+    #         TX packets 12  bytes 912 (912.0 B)
+    #         TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0
+    # To make it survive from VDNet, we need to remove the colon
+    local ifconfig_path=/usr/sbin/ifconfig
+    local ifconfig_backup=/usr/sbin/ifconfig.stock
+    cp $ifconfig_path $ifconfig_backup
+    cat <<EOF >/usr/sbin/ifconfig
+#!/bin/bash
+$ifconfig_backup "\$@" | sed -e 's/^\([a-z0-9]*\):/\1/g'
+EOF
+}
+
+# For RHEL7 only
+function set_default_boot_entry
+{
+    gecho Set the new kernel as default boot entry
+    grub2-set-default 0
 }
 
 # For Suse only
@@ -243,11 +287,59 @@ EOF
     cat $if_file
     done
 }
+# For Redhat only
+function check_redhat_if_file {
+    gecho 'Check network interface file'
+    local if_dir=/etc/sysconfig/network-scripts/
+    local if_file=
+    if [[ ! -d $if_dir ]]; then
+        yecho "No $if_dir, skip"
+        return
+    fi
+    for i in $(eval echo {0..$MAX_IF_INDEX})
+    do
+        if_file="${if_dir}/ifcfg-eth${i}"
+        if [[ -f $if_file ]]; then
+            yecho "$if_file exists, skip"
+            continue
+        fi
+        echo Create $if_file
+        cat <<EOF >${if_file}
+TYPE=Ethernet
+BOOTPROTO=dhcp
+DEFROUTE=yes
+PEERDNS=yes
+PEERROUTES=yes
+IPV4_FAILURE_FATAL=no
+IPV6INIT=yes
+IPV6_AUTOCONF=yes
+IPV6_DEFROUTE=yes
+IPV6_PEERDNS=yes
+IPV6_PEERROUTES=yes
+IPV6_FAILURE_FATAL=no
+NAME=eth${i}
+DEVICE=eth${i}
+ONBOOT=yes
+EOF
+    echo File content:
+    cat $if_file
+    done
+}
+
+# For Redhat only
+function disable_libvirtd
+{
+    gecho 'Disable libvirtd service'
+    systemctl stop libvirtd.service
+    systemctl disable libvirtd.service
+}
 function check_kernel {
     gecho Check kernel
     if [[ $KERNEL_VERSION = $(uname -r) ]]; then
         recho Failed to update kernel
         exit 1
+    else
+        gecho Successfully upgrade kernel from $KERNEL_VERSION to $(uname -r)
     fi
 }
 function list_log_files {
@@ -272,9 +364,9 @@ function usage
     UPDATE mode will update the kernel with given kernel URL.
     CHECK mode will check the kernel by comparing current kernel version with old kernel version.
     Note, make sure to *reboot* the system after UPDATE mode to make the new kernel take effect, after that one can run CHECK mode.
-    $prog_name -h                          # Help message for this tool
-    $prog_name -u <Kernel URL> [-m UPDATE] # Execute UPDATE mode: Update kernel
-    $prog_name -k <Kernel version> [-m CHECK]               # Execute CHECK mode: Check if kernel successfully updated
+    $prog_name -h                               # Help message for this tool
+    $prog_name -u <Kernel URL> [-m UPDATE]      # Execute UPDATE mode: Update kernel
+    $prog_name -k <Kernel version> <-m CHECK>   # Execute CHECK mode: Check if kernel successfully updated
 EOF
 }
 
@@ -336,7 +428,12 @@ check_working_directory
 prog_name=$(basename $0)
 process_args "$@"
 
-echo Execute $prog_name in $EXEC_MODE mode
+if [[ -z $EXEC_MODE ]]; then
+    yecho "No execution mode given. Execute $prog_name in UPDATE mode by default"
+    EXEC_MODE=UPDATE
+else
+    echo Execute $prog_name in $EXEC_MODE mode
+fi
 if [[ $EXEC_MODE = UPDATE ]]; then
     case $current_os in
         "${SLES12_X64}")
@@ -344,6 +441,15 @@ if [[ $EXEC_MODE = UPDATE ]]; then
             update_kernel
             update_mount_output
             check_suse_if_file
+            ;;
+        "${RHEL72_X64}")
+            show_net_drivers
+            update_kernel
+            update_mount_output
+            set_default_boot_entry
+            check_redhat_if_file
+            update_ifconfig_output
+            disable_libvirtd
             ;;
         *)
             recho 'Unsupported Operating system.'
@@ -356,6 +462,10 @@ elif [[ $EXEC_MODE = CHECK ]]; then
     fi
     case $current_os in
         "${SLES12_X64}")
+            show_net_drivers
+            check_kernel
+            ;;
+        "${RHEL72_X64}")
             show_net_drivers
             check_kernel
             ;;
